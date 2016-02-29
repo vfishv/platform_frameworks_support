@@ -28,6 +28,7 @@ LOCAL_AAPT_FLAGS := \
 	--auto-add-overlay \
 	--extra-packages android.support.v7.appcompat
 LOCAL_JAR_EXCLUDE_FILES := none
+LOCAL_JAVA_LANGUAGE_VERSION := 1.7
 include $(BUILD_STATIC_JAVA_LIBRARY)
 
 support_module_src_files := $(LOCAL_SRC_FILES)
@@ -37,6 +38,7 @@ include $(CLEAR_VARS)
 LOCAL_MODULE := android-support-v7-mediarouter-jellybean
 LOCAL_SDK_VERSION := 16
 LOCAL_SRC_FILES := $(call all-java-files-under, jellybean)
+LOCAL_JAVA_LANGUAGE_VERSION := 1.7
 include $(BUILD_STATIC_JAVA_LIBRARY)
 
 support_module_src_files += $(LOCAL_SRC_FILES)
@@ -47,6 +49,7 @@ LOCAL_MODULE := android-support-v7-mediarouter-jellybean-mr1
 LOCAL_SDK_VERSION := 17
 LOCAL_SRC_FILES := $(call all-java-files-under, jellybean-mr1)
 LOCAL_STATIC_JAVA_LIBRARIES := android-support-v7-mediarouter-jellybean
+LOCAL_JAVA_LANGUAGE_VERSION := 1.7
 include $(BUILD_STATIC_JAVA_LIBRARY)
 
 support_module_src_files += $(LOCAL_SRC_FILES)
@@ -57,6 +60,7 @@ LOCAL_MODULE := android-support-v7-mediarouter-jellybean-mr2
 LOCAL_SDK_VERSION := 18
 LOCAL_SRC_FILES := $(call all-java-files-under, jellybean-mr2)
 LOCAL_STATIC_JAVA_LIBRARIES := android-support-v7-mediarouter-jellybean-mr1
+LOCAL_JAVA_LANGUAGE_VERSION := 1.7
 include $(BUILD_STATIC_JAVA_LIBRARY)
 
 support_module_src_files += $(LOCAL_SRC_FILES)
@@ -73,6 +77,7 @@ LOCAL_STATIC_JAVA_LIBRARIES := android-support-v7-mediarouter-jellybean-mr2
 LOCAL_JAVA_LIBRARIES := android-support-v4 android-support-v7-mediarouter-res \
     android-support-v7-appcompat \
     android-support-v7-palette
+LOCAL_JAVA_LANGUAGE_VERSION := 1.7
 include $(BUILD_STATIC_JAVA_LIBRARY)
 
 support_module_src_files += $(LOCAL_SRC_FILES)
@@ -81,7 +86,19 @@ support_module_src_files += $(LOCAL_SRC_FILES)
 # ---------------------------------------------
 support_module := $(LOCAL_MODULE)
 support_module_api_dir := $(LOCAL_PATH)/api
-support_module_src_files := $(LOCAL_SRC_FILES)
+# We're asking doclava to generate stubs for android.support.v7.app in addition
+# to mediarouter, so we'll have to point doclava at the sources for
+# android.support.v7.app. Note that this API definition will overlap with that
+# of the android.support.v7.app package.
+support_module_src_files := $(LOCAL_SRC_FILES) \
+  ../appcompat/src/android/support/v7/app/AppCompatDelegate.java \
+  ../appcompat/src/android/support/v7/app/AppCompatCallback.java \
+  ../appcompat/src/android/support/v7/app/AppCompatDialog.java \
+  ../appcompat/src/android/support/v7/app/AlertDialog.java \
+  ../appcompat/src/android/support/v7/app/ActionBar.java \
+  ../appcompat/src/android/support/v7/app/ActionBarDrawerToggle.java \
+
+
 support_module_java_libraries := $(LOCAL_JAVA_LIBRARIES)
 support_module_java_packages := android.support.v7.app android.support.v7.media
 include $(SUPPORT_API_CHECK)

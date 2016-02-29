@@ -1779,6 +1779,104 @@ nScriptReduce(JNIEnv *_env, jobject _this, jlong con, jlong script, jint slot,
     }
 }
 
+static void
+nScriptReduceNew(JNIEnv *_env, jobject _this, jlong con, jlong script, jint slot,
+                 jlongArray ains, jlong aout, jintArray limits)
+{
+    LOG_API("nScriptReduceNew, con(%p), s(%p), slot(%i) ains(%p) aout(%" PRId64 ")", (RsContext)con, (void *)script, slot, ains, aout);
+
+    if (ains == nullptr) {
+        LOG_ERR("At least one input required.");
+        // TODO (b/20758983): Report back to Java and throw an exception
+        return;
+    }
+    jint in_len = _env->GetArrayLength(ains);
+    if (in_len > (jint)RS_KERNEL_MAX_ARGUMENTS) {
+        LOG_ERR("Too many arguments in kernel launch.");
+        // TODO (b/20758983): Report back to Java and throw an exception
+        return;
+    }
+
+    jlong *in_ptr = _env->GetLongArrayElements(ains, nullptr);
+    if (in_ptr == nullptr) {
+        LOG_ERR("Failed to get Java array elements");
+        // TODO (b/20758983): Report back to Java and throw an exception
+        return;
+    }
+
+    RsAllocation *in_allocs = nullptr;
+    if (sizeof(RsAllocation) == sizeof(jlong)) {
+        in_allocs = (RsAllocation*)in_ptr;
+    } else {
+        // Convert from 64-bit jlong types to the native pointer type.
+
+        in_allocs = (RsAllocation*)alloca(in_len * sizeof(RsAllocation));
+        if (in_allocs == nullptr) {
+            LOG_ERR("Failed launching kernel for lack of memory.");
+            // TODO (b/20758983): Report back to Java and throw an exception
+            _env->ReleaseLongArrayElements(ains, in_ptr, JNI_ABORT);
+            return;
+        }
+
+        for (int index = in_len; --index >= 0;) {
+            in_allocs[index] = (RsAllocation)in_ptr[index];
+        }
+    }
+
+    RsScriptCall sc, *sca = nullptr;
+    uint32_t sc_size = 0;
+
+    jint  limit_len = 0;
+    jint *limit_ptr = nullptr;
+
+    if (limits != nullptr) {
+        limit_len = _env->GetArrayLength(limits);
+        limit_ptr = _env->GetIntArrayElements(limits, nullptr);
+        if (limit_ptr == nullptr) {
+            LOG_ERR("Failed to get Java array elements");
+            // TODO (b/20758983): Report back to Java and throw an exception
+            _env->ReleaseLongArrayElements(ains, in_ptr, JNI_ABORT);
+            return;
+        }
+
+        if (limit_len != 6) {
+            LOG_ERR("LaunchOptions cannot be recognized");
+            // TODO (b/20758983): Report back to Java and throw an exception
+            _env->ReleaseLongArrayElements(ains, in_ptr, JNI_ABORT);
+            return;
+        }
+
+        sc.xStart     = limit_ptr[0];
+        sc.xEnd       = limit_ptr[1];
+        sc.yStart     = limit_ptr[2];
+        sc.yEnd       = limit_ptr[3];
+        sc.zStart     = limit_ptr[4];
+        sc.zEnd       = limit_ptr[5];
+        sc.strategy   = RS_FOR_EACH_STRATEGY_DONT_CARE;
+        sc.arrayStart = 0;
+        sc.arrayEnd = 0;
+        sc.array2Start = 0;
+        sc.array2End = 0;
+        sc.array3Start = 0;
+        sc.array3End = 0;
+        sc.array4Start = 0;
+        sc.array4End = 0;
+
+        sca = &sc;
+        sc_size = sizeof(sc);
+    }
+
+    dispatchTab.ScriptReduceNew((RsContext)con, (RsScript)script, slot,
+                                in_allocs, in_len, (RsAllocation)aout,
+                                sca, sc_size);
+
+    _env->ReleaseLongArrayElements(ains, in_ptr, JNI_ABORT);
+
+    if (limits != nullptr) {
+        _env->ReleaseIntArrayElements(limits, limit_ptr, JNI_ABORT);
+    }
+}
+
 // -----------------------------------
 
 static jlong
@@ -1880,42 +1978,75 @@ nScriptGroupCreate(JNIEnv *_env, jobject _this, jlong con, jlongArray _kernels, 
 {
     LOG_API("nScriptGroupCreate, con(%p)", (RsContext)con);
 
+    jlong id = 0;
+
+    RsScriptKernelID* kernelsPtr;
     jint kernelsLen = _env->GetArrayLength(_kernels);
     jlong *jKernelsPtr = _env->GetLongArrayElements(_kernels, nullptr);
-    RsScriptKernelID* kernelsPtr = (RsScriptKernelID*) malloc(sizeof(RsScriptKernelID) * kernelsLen);
+
+    RsScriptKernelID* srcPtr;
+    jint srcLen = _env->GetArrayLength(_src);
+    jlong *jSrcPtr = _env->GetLongArrayElements(_src, nullptr);
+
+    RsScriptKernelID* dstkPtr;
+    jint dstkLen = _env->GetArrayLength(_dstk);
+    jlong *jDstkPtr = _env->GetLongArrayElements(_dstk, nullptr);
+
+    RsScriptKernelID* dstfPtr;
+    jint dstfLen = _env->GetArrayLength(_dstf);
+    jlong *jDstfPtr = _env->GetLongArrayElements(_dstf, nullptr);
+
+    RsType* typesPtr;
+    jint typesLen = _env->GetArrayLength(_types);
+    jlong *jTypesPtr = _env->GetLongArrayElements(_types, nullptr);
+
+    if (jKernelsPtr == nullptr) {
+        LOG_ERR("Failed to get Java array elements: kernels");
+        goto cleanup;
+    }
+    if (jSrcPtr == nullptr) {
+        LOG_ERR("Failed to get Java array elements: src");
+        goto cleanup;
+    }
+    if (jDstkPtr == nullptr) {
+        LOG_ERR("Failed to get Java array elements: dstk");
+        goto cleanup;
+    }
+    if (jDstfPtr == nullptr) {
+        LOG_ERR("Failed to get Java array elements: dstf");
+        goto cleanup;
+    }
+    if (jTypesPtr == nullptr) {
+        LOG_ERR("Failed to get Java array elements: types");
+        goto cleanup;
+    }
+
+    kernelsPtr = (RsScriptKernelID*) malloc(sizeof(RsScriptKernelID) * kernelsLen);
     for(int i = 0; i < kernelsLen; ++i) {
         kernelsPtr[i] = (RsScriptKernelID)jKernelsPtr[i];
     }
 
-    jint srcLen = _env->GetArrayLength(_src);
-    jlong *jSrcPtr = _env->GetLongArrayElements(_src, nullptr);
-    RsScriptKernelID* srcPtr = (RsScriptKernelID*) malloc(sizeof(RsScriptKernelID) * srcLen);
+    srcPtr = (RsScriptKernelID*) malloc(sizeof(RsScriptKernelID) * srcLen);
     for(int i = 0; i < srcLen; ++i) {
         srcPtr[i] = (RsScriptKernelID)jSrcPtr[i];
     }
 
-    jint dstkLen = _env->GetArrayLength(_dstk);
-    jlong *jDstkPtr = _env->GetLongArrayElements(_dstk, nullptr);
-    RsScriptKernelID* dstkPtr = (RsScriptKernelID*) malloc(sizeof(RsScriptKernelID) * dstkLen);
+    dstkPtr = (RsScriptKernelID*) malloc(sizeof(RsScriptKernelID) * dstkLen);
     for(int i = 0; i < dstkLen; ++i) {
         dstkPtr[i] = (RsScriptKernelID)jDstkPtr[i];
     }
 
-    jint dstfLen = _env->GetArrayLength(_dstf);
-    jlong *jDstfPtr = _env->GetLongArrayElements(_dstf, nullptr);
-    RsScriptKernelID* dstfPtr = (RsScriptKernelID*) malloc(sizeof(RsScriptKernelID) * dstfLen);
+    dstfPtr = (RsScriptKernelID*) malloc(sizeof(RsScriptKernelID) * dstfLen);
     for(int i = 0; i < dstfLen; ++i) {
         dstfPtr[i] = (RsScriptKernelID)jDstfPtr[i];
     }
 
-    jint typesLen = _env->GetArrayLength(_types);
-    jlong *jTypesPtr = _env->GetLongArrayElements(_types, nullptr);
-    RsType* typesPtr = (RsType*) malloc(sizeof(RsType) * typesLen);
+    typesPtr = (RsType*) malloc(sizeof(RsType) * typesLen);
     for(int i = 0; i < typesLen; ++i) {
         typesPtr[i] = (RsType)jTypesPtr[i];
     }
 
-    jlong id = (jlong)(uintptr_t) dispatchTab.ScriptGroupCreate((RsContext)con,
+    id = (jlong)(uintptr_t) dispatchTab.ScriptGroupCreate((RsContext)con,
                                (RsScriptKernelID *)kernelsPtr, kernelsLen * sizeof(RsScriptKernelID),
                                (RsScriptKernelID *)srcPtr, srcLen * sizeof(RsScriptKernelID),
                                (RsScriptKernelID *)dstkPtr, dstkLen * sizeof(RsScriptKernelID),
@@ -1927,11 +2058,24 @@ nScriptGroupCreate(JNIEnv *_env, jobject _this, jlong con, jlongArray _kernels, 
     free(dstkPtr);
     free(dstfPtr);
     free(typesPtr);
-    _env->ReleaseLongArrayElements(_kernels, jKernelsPtr, 0);
-    _env->ReleaseLongArrayElements(_src, jSrcPtr, 0);
-    _env->ReleaseLongArrayElements(_dstk, jDstkPtr, 0);
-    _env->ReleaseLongArrayElements(_dstf, jDstfPtr, 0);
-    _env->ReleaseLongArrayElements(_types, jTypesPtr, 0);
+
+cleanup:
+    if (jKernelsPtr != nullptr) {
+        _env->ReleaseLongArrayElements(_kernels, jKernelsPtr, 0);
+    }
+    if (jSrcPtr != nullptr) {
+        _env->ReleaseLongArrayElements(_src, jSrcPtr, 0);
+    }
+    if (jDstkPtr != nullptr) {
+        _env->ReleaseLongArrayElements(_dstk, jDstkPtr, 0);
+    }
+    if (jDstfPtr != nullptr) {
+        _env->ReleaseLongArrayElements(_dstf, jDstfPtr, 0);
+    }
+    if (jTypesPtr != nullptr) {
+        _env->ReleaseLongArrayElements(_types, jTypesPtr, 0);
+    }
+
     return id;
 }
 
@@ -2237,6 +2381,7 @@ static JNINativeMethod methods[] = {
 {"rsnScriptForEachClipped",          "(JJJIJJIIIIIIZ)V",                      (void*)nScriptForEachClipped },
 {"rsnScriptForEachClipped",          "(JJJIJJ[BIIIIIIZ)V",                    (void*)nScriptForEachClippedV },
 {"rsnScriptReduce",                  "(JJIJJ[I)V",                            (void*)nScriptReduce },
+{"rsnScriptReduceNew",               "(JJI[JJ[I)V",                           (void*)nScriptReduceNew },
 {"rsnScriptSetVarI",                 "(JJIIZ)V",                              (void*)nScriptSetVarI },
 {"rsnScriptSetVarJ",                 "(JJIJZ)V",                              (void*)nScriptSetVarJ },
 {"rsnScriptSetVarF",                 "(JJIFZ)V",                              (void*)nScriptSetVarF },
